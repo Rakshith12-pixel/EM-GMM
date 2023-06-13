@@ -1,0 +1,95 @@
+import pandas as pd
+import numpy as np
+import sklearn
+import scipy
+from scipy.stats import multivariate_normal
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import PIL
+from PIL import Image
+import tensorflow as tf
+
+MNIST_data=pd.read_csv("fashion-mnist_train.csv")
+
+device_name = tf.test.gpu_device_name()
+if len(device_name) > 0:
+    print("Found GPU at: {}".format(device_name))
+else:
+    device_name = "/device:CPU:0"
+    print("No GPU, using {}.".format(device_name))
+    
+   def gmm(X, K, max_iter):
+    N,D=X.shape 
+    pi=np.ones(K)/K #K initial set of mixing coefficients(summing to 1)
+    mu=np.random.randn(K,D) #mu is a list with K vectors each of shape (D,1)
+    sigma=np.zeros((K,D,D)) 
+    for k in range(K):
+        sigma[k]=np.eye(D)+1e-6*np.ones((D, D))   #sigma matrices are K matrices of shape D*D intiliaized with identity matrix
+    log_likelihoods=[]
+
+    #Expectation step to compute responsibilities(gamma)
+    for i in range(max_iter):
+        gamma=np.zeros((N,K))
+        for k in range(K):
+            gamma[:,k]=pi[k]*multivariate_normal.pdf(X,mu[k],sigma[k])
+        gamma=gamma/(gamma.sum(axis=1,keepdims=True)+1e-6)
+
+    # Maximization step to update parameters
+        Nk=gamma.sum(axis=0)
+        pi=Nk/N #updating the mixing coeficcients
+        for k in range(K):
+            mu[k]=gamma[:,k].dot(X)/Nk[k] #updating the mu and sigma using the responsibilities found
+            sigma[k]=(gamma[:,k]*(X-mu[k]).T).dot(X-mu[k])/Nk[k]+1e-6*np.eye(D)
+
+        # Compute log-likelihood
+        log_likelihood=0
+        for n in range(N):
+            s=0
+            for k in range(K):
+                s+=pi[k]*multivariate_normal.pdf(X[n],mu[k],sigma[k])
+            log_likelihood+=np.log(s)
+        log_likelihoods.append(log_likelihood)
+
+        # Checking for convergence
+        if i>0 and np.abs(log_likelihoods[-1]-log_likelihoods[-2])<10000:
+            break
+ X=MNIST_data.iloc[1:4000,1:786].values #maxing at 100 points, 100 columns, PCA reduced to 70 columns
+X = np.nan_to_num(X, nan=1e-3)
+X_new=np.where(X==0,1e-3,X) #setting smallnon zero values to the 0s so they don't cause overflow
+
+scaling=StandardScaler()  #using standardization as the code gave errors without it for lesser data
+scaled_x=scaling.fit_transform(X_new)
+
+
+principal=PCA(n_components=70)
+principal.fit(scaled_x)
+x=principal.transform(scaled_x)
+print(x.shape)
+
+pi,mu,sigma,likelihood=gmm(x,5,max_iter=100)
+samples = np.random.multivariate_normal(mu[2],sigma[2])
+samples_original=principal.inverse_transform(samples)
+for i in range(784):
+    if samples_original[i] < 1e-3:
+        samples_original[i] = 0.1
+samples_processed=samples_original.reshape(28,28)
+samples_processed=samples_processed+255
+plt.imshow(samples_processed,cmap='gray',interpolation='spline36')  # Displaying the image using matplotlib
+plt.show()
+
+nrows = 10
+ncols = 10
+fig, ax = plt.subplots(nrows,ncols,sharex=True,sharey=True, figsize=(nrows * 3, ncols *3))
+for row in range(nrows):
+    for col in range(ncols):
+        index = random.randint(0,4)
+        # print(index)
+        # print(mu[index],sigma[index])
+        samples = np.random.multivariate_normal(mu[index],sigma[index])
+        samples_original=principal.inverse_transform(samples) #refitting back to 100 dimensions to prevent information loss
+        samples_new_pro=np.reshape(samples_original,(28,28))
+        ax[row,col].imshow(samples_new_pro,cmap='gray')
+        #ax[row,col].axis('off')
+        ax[row,col].set_xticks([])
+        ax[row,col].set_yticks([])
